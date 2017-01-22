@@ -1,0 +1,74 @@
+services:
+  - docker
+
+before_install:
+  - ssh-keygen -f /tmp/id_rsa -P '' -t rsa
+  - ssh-keygen -f /tmp/host_rsa -P '' -t rsa
+  - chmod 0444 /tmp/host_rsa
+
+install:
+  - docker build -t image .
+
+script:
+  # Test socks proxy with generated host key
+  - >
+    docker run -d
+    -p 127.0.0.1:2222:2222
+    -v /tmp/id_rsa.pub:/etc/ssh/authorized_keys:ro
+    --name container
+    --security-opt no-new-privileges
+    --cap-drop ALL
+    --cap-add SYS_CHROOT
+    --cap-add SETUID
+    --cap-add SETGID
+    --add-host example.com:192.30.253.112
+    image
+  - sleep 1s
+  - >
+    ssh tunnel@localhost
+    -f -M -S /tmp/ssh.sock
+    -N -p 2222 -D 8822
+    -i /tmp/id_rsa
+    -o StrictHostKeyChecking=no
+    -o UserKnownHostsFile=/dev/null
+  - >
+    curl -s -k -I
+    --socks5-hostname 127.0.0.1:8822
+    https://example.com
+    | grep -q Location:\ https://github.com/
+  - >
+    ssh tunnel@localhost
+    -S /tmp/ssh.sock -O exit
+    -o StrictHostKeyChecking=no
+    -o UserKnownHostsFile=/dev/null
+  - docker stop container
+  - docker rm container
+
+  # Test reverse tunnel with provided host key
+  - >
+    docker run -d
+    -p 127.0.0.1:2222:2222
+    -v /tmp/id_rsa.pub:/etc/ssh/authorized_keys:ro
+    -v /tmp/host_rsa:/etc/ssh/ssh_host_rsa_key:ro
+    --name container
+    --security-opt no-new-privileges
+    --cap-drop ALL
+    --cap-add SYS_CHROOT
+    --cap-add SETUID
+    --cap-add SETGID
+    image
+  - sleep 1s
+  - >
+    ssh tunnel@localhost
+    -f -M -S /tmp/ssh.sock
+    -N -p 2222 -R 80:localhost:8000
+    -i /tmp/id_rsa
+    -o StrictHostKeyChecking=no
+    -o UserKnownHostsFile=/dev/null
+  - >
+    ssh tunnel@localhost
+    -S /tmp/ssh.sock -O exit
+    -o StrictHostKeyChecking=no
+    -o UserKnownHostsFile=/dev/null
+  - docker stop container
+  - docker rm container
